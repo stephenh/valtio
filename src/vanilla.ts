@@ -107,50 +107,23 @@ const buildProxyFunction = (
       : Object.create(Object.getPrototypeOf(target))
     markToTrack(snap, true) // mark to track
     snapCache.set(target, [version, snap])
-
-    function getValue(key: PropertyKey): any {
+    Reflect.ownKeys(target).forEach((key) => {
       const value = Reflect.get(target, key)
       if (refSet.has(value as object)) {
         markToTrack(value as object, false) // mark not to track
-        return value
-      } else if (proxyStateMap.has(value as object)) {
-        return snapshot(value as object, handlePromise)
-      } else {
-        return value
-      }
-    }
-
-    // This will copy all object getters, functions, and values
-    Reflect.ownKeys(target).forEach((key) => {
-      const value = getValue(key)
-      if (value instanceof Promise) {
+        snap[key] = value
+      } else if (value instanceof Promise) {
         Object.defineProperty(snap, key, {
           get() {
             return handlePromise(value)
           },
         })
+      } else if (proxyStateMap.has(value as object)) {
+        snap[key] = snapshot(value as object, handlePromise)
       } else {
         snap[key] = value
       }
     })
-
-    // Now look for proto getters to essentially cache them
-    const protoGetters = findPrototypeGetters(target)
-    protoGetters.forEach((key) => {
-      const value = getValue(key)
-      if (value instanceof Promise) {
-        Object.defineProperty(snap, key, {
-          get() {
-            return handlePromise(value)
-          },
-        })
-      } else {
-        // We have to use `defineProperty` instead of `snap[key] = value` to explicitly
-        // set the value on the snap instance itself, and not just invoke the setter
-        Object.defineProperty(snap, key, { value })
-      }
-    })
-
     return Object.freeze(snap)
   },
 
