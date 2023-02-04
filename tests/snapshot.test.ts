@@ -1,4 +1,8 @@
 import { expect, it } from '@jest/globals'
+import {
+  affectedToPathList,
+  createProxy as createProxyToCompare,
+} from 'proxy-compare'
 import { proxy, snapshot } from 'valtio'
 
 const sleep = (ms: number) =>
@@ -41,4 +45,41 @@ it('should not change snapshot with assigning same object', async () => {
   state.obj = obj
   const snap2 = snapshot(state)
   expect(snap1).toBe(snap2)
+})
+
+it('should cache object getters', () => {
+  let getter = 0
+  const state = proxy({
+    count: 1,
+    get doubled() {
+      getter++
+      return this.count
+    },
+    set doubled(v: number) {
+      this.count = v / 2
+    },
+  })
+
+  // getter calls to the state are not cached
+  state.doubled
+  expect(getter).toBe(1)
+  state.doubled
+  expect(getter).toBe(2)
+
+  // creating a snapshot caches the getter
+  const snap = snapshot(state)
+  expect(getter).toBe(3)
+  expect(Reflect.ownKeys(snap)).toEqual(['count', 'doubled'])
+
+  snap.doubled
+  expect(getter).toBe(3)
+
+  // and the setter will blow up
+  expect(() => ((snap as any).doubled = 8)).toThrowError('Cannot assign')
+
+  // and `doubled` shows up in affectedToPathList
+  const affected = new WeakMap()
+  const cmp = createProxyToCompare(snap, affected)
+  cmp.doubled
+  expect(affectedToPathList(cmp, affected)).toEqual([['doubled']])
 })

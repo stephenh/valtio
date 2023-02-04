@@ -7,3 +7,4 @@ export { proxyWithComputed_DEPRECATED as proxyWithComputed } from './utils/proxy
 export { proxyWithHistory } from './utils/proxyWithHistory'
 export { proxySet } from './utils/proxySet'
 export { proxyMap } from './utils/proxyMap'
+export { proxyWithClass } from './utils/proxyWithClass'
