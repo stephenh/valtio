@@ -99,8 +99,14 @@ it('should cache class getters', () => {
   // creating a snapshot caches the getter
   const snap = snapshot(state)
   expect(getter).toBe(3)
-  // fails here b/c `snap[key] = value` called the prototype setter instead of
-  // defining a property directly on the object
+  // Fails here b/c `snap[key] = value` called the prototype setter instead of
+  // defining a property directly on the object, b/c even though we'd force defined
+  // `doubled` on the `state` instance, the snapshot process starts from a clean
+  // slate `snap = Object.create(Counter)`, and so while it does pick up `doubled`
+  // from `Reflect.ownKeys(state)`, when it calls `snap[key] = value`, it still
+  // (naturally) goes to the prototype setter.
+  //
+  // I.e. we need to `Object.define` `doubled` directly on the `snap` object.
   expect(Reflect.ownKeys(snap)).toEqual(['count', 'doubled'])
 
   snap.doubled
@@ -120,6 +126,7 @@ function copyGetters<T extends object>(instance: T): T {
     Reflect.ownKeys(current).forEach((key) => {
       const pd = Object.getOwnPropertyDescriptor(current, key)
       if (pd && pd.get) {
+        console.log('Setting', key, 'directly on', instance)
         Object.defineProperty(instance, key, { ...pd, enumerable: true })
       }
     })
