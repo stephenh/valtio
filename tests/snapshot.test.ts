@@ -1,4 +1,8 @@
 import { expect, it } from '@jest/globals'
+import {
+  affectedToPathList,
+  createProxy as createProxyToCompare,
+} from 'proxy-compare'
 import { proxy, snapshot } from 'valtio'
 
 const sleep = (ms: number) =>
@@ -72,6 +76,12 @@ it('should cache object getters', () => {
 
   // and the setter will blow up
   expect(() => ((snap as any).doubled = 8)).toThrowError('Cannot assign')
+
+  // and `doubled` shows up in affectedToPathList
+  const affected = new WeakMap()
+  const cmp = createProxyToCompare(snap, affected)
+  cmp.doubled
+  expect(affectedToPathList(cmp, affected)).toEqual([['doubled']])
 })
 
 it('should cache class getters', () => {
@@ -104,4 +114,10 @@ it('should cache class getters', () => {
 
   // and the setter will blow up
   expect(() => ((snap as any).doubled = 8)).toThrowError('Cannot assign')
+
+  // and `doubled` shows up in affectedToPathList
+  const affected = new WeakMap()
+  const cmp = createProxyToCompare(snap, affected)
+  cmp.doubled
+  expect(affectedToPathList(cmp, affected)).toEqual([['doubled']])
 })
