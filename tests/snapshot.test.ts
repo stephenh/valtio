@@ -86,7 +86,9 @@ it('should cache class getters', () => {
       this.count = v / 2
     }
   }
-  const state = proxy(new Counter())
+  const state = proxy(copyGetters(new Counter()))
+  expect(state).toBeInstanceOf(Counter)
+  expect(Reflect.ownKeys(state)).toEqual(['count', 'doubled'])
 
   // getter calls to the state are not cached
   state.doubled
@@ -97,6 +99,8 @@ it('should cache class getters', () => {
   // creating a snapshot caches the getter
   const snap = snapshot(state)
   expect(getter).toBe(3)
+  // fails here b/c `snap[key] = value` called the prototype setter instead of
+  // defining a property directly on the object
   expect(Reflect.ownKeys(snap)).toEqual(['count', 'doubled'])
 
   snap.doubled
@@ -105,3 +109,21 @@ it('should cache class getters', () => {
   // and the setter will blow up
   expect(() => ((snap as any).doubled = 8)).toThrowError('Cannot assign')
 })
+
+function copyGetters<T extends object>(instance: T): T {
+  let current = Object.getPrototypeOf(instance)
+  while (
+    current &&
+    current !== Object.prototype &&
+    current !== Array.prototype
+  ) {
+    Reflect.ownKeys(current).forEach((key) => {
+      const pd = Object.getOwnPropertyDescriptor(current, key)
+      if (pd && pd.get) {
+        Object.defineProperty(instance, key, { ...pd, enumerable: true })
+      }
+    })
+    current = Object.getPrototypeOf(current)
+  }
+  return instance
+}

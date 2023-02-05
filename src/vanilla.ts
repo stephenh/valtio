@@ -121,6 +121,9 @@ const buildProxyFunction = (
       } else if (proxyStateMap.has(value as object)) {
         snap[key] = snapshot(value as object, handlePromise)
       } else {
+        // This still invokes the Counter.double setter instead of putting `doubled`
+        // directly on the snapshot. We'd have to stop setting the snapshot's prototype,
+        // or use Object.defineProperty
         snap[key] = value
       }
     })
@@ -379,22 +382,3 @@ export function ref<T extends object>(obj: T): T & AsRef {
 }
 
 export const unstable_buildProxyFunction = buildProxyFunction
-
-/** Walks the prototype chain looking for getters. */
-function findPrototypeGetters(target: any): PropertyKey[] {
-  const protoGetters: PropertyKey[] = []
-  let current = Object.getPrototypeOf(target)
-  while (
-    current &&
-    current !== Object.prototype &&
-    current !== Array.prototype
-  ) {
-    protoGetters.push(
-      ...Reflect.ownKeys(current).filter(
-        (key) => Object.getOwnPropertyDescriptor(current, key)?.get
-      )
-    )
-    current = Object.getPrototypeOf(current)
-  }
-  return protoGetters
-}
