@@ -272,8 +272,16 @@ const buildProxyFunction = (
             addPropListener(prop, childProxyState)
           }
         }
+        const prevLength = Array.isArray(target) ? target.length : 0
         Reflect.set(target, prop, nextValue, receiver)
         notifyUpdate(['set', [prop], value, prevValue])
+        // Hack to get `books/length` notified as dirty...
+        if (Array.isArray(target)) {
+          const nextLength = target.length
+          if (prevLength !== nextLength) {
+            notifyUpdate(['set', ['length'], nextLength, prevLength])
+          }
+        }
         return true
       },
     }
