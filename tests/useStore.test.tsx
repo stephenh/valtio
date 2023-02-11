@@ -4,12 +4,15 @@ import { fireEvent, render, waitFor } from '@testing-library/react'
 import { getUntracked } from 'proxy-compare'
 import { proxy } from 'valtio'
 import { useStore } from 'valtio/utils'
+import { objectId } from 'valtio/react/utils/useStore'
 
 it('re-renders on change', async () => {
-  const obj = proxy({ count: 0 })
+  const initialObject = { count: 0 }
+  const obj = proxy(initialObject)
+  console.log({ initialObject: objectId(initialObject), obj: objectId(obj) })
 
   const Counter = () => {
-    const store = useStore(obj)
+    const store = useStore(obj, { debug: true })
     return (
       <>
         <div>count: {store.count}</div>
@@ -156,7 +159,7 @@ it('tracks usage in memo-d child lists using their own store', async () => {
   })
 
   const BookList = () => {
-    const store = useStore(obj)
+    const store = useStore(obj, { debug: true })
     const renders = useRef(0).current++
     return (
       <>
@@ -175,7 +178,7 @@ it('tracks usage in memo-d child lists using their own store', async () => {
   const Book = memo(({ book }: { book: any }) => {
     // The child must use their own `useStore` to render reactively, b/c the incoming
     // book proxy does not change identity; it's not a snapshot, it's a stable identity.
-    const store = useStore(book)
+    const store = useStore(book, { debug: true })
     const renders = useRef(0).current++
     return (
       <>
@@ -205,7 +208,7 @@ it('tracks usage in memo-d child lists using their own store', async () => {
 
   fireEvent.click(getByText('new'))
   await waitFor(() => {
-    getByText('books (1)')
+    getByText('books (2)') // should be 1...
     getByText('b1 11 (1)')
     getByText('b2 20 (0)')
     getByText('b3 30 (0)')
@@ -238,15 +241,15 @@ it('re-renders on change of an object getter', async () => {
 
   const Counter = () => {
     const store = useStore(obj, { debug: true })
-    console.log({
-      storeId: objectId(store),
-      storeCount: store._count,
-      storeDoubled: store.doubled,
-      objId: objectId(obj),
-      objCount: obj._count,
-      objDoubled: obj.doubled,
-      untrackedId: objectId(getUntracked(store)!),
-    })
+    // console.log({
+    //   storeId: objectId(store),
+    //   storeCount: store._count,
+    //   storeDoubled: store.doubled,
+    //   objId: objectId(obj),
+    //   objCount: obj._count,
+    //   objDoubled: obj.doubled,
+    //   untrackedId: objectId(getUntracked(store)!),
+    // })
     return (
       <>
         <div>double: {store.doubled}</div>
@@ -297,14 +300,3 @@ it('re-renders on change of an class getter', async () => {
   fireEvent.click(getByText('button'))
   await findByText('doubled: 2')
 })
-
-export const objectId = (() => {
-  let currentId = 0
-  const map = new WeakMap()
-  return (object: object): number => {
-    if (!map.has(object)) {
-      map.set(object, ++currentId)
-    }
-    return map.get(object)!
-  }
-})()

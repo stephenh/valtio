@@ -9,10 +9,11 @@ type ProxyObject = object
 
 type Path = (string | symbol)[]
 type Op =
-  | [op: 'set', path: Path, value: unknown, prevValue: unknown]
-  | [op: 'delete', path: Path, prevValue: unknown]
-  | [op: 'resolve', path: Path, value: unknown]
-  | [op: 'reject', path: Path, error: unknown]
+  // Add a root object so that subscribers at the root can know which child changed
+  | [op: 'set', path: Path, value: unknown, prevValue: unknown, root: object]
+  | [op: 'delete', path: Path, prevValue: unknown, root: object]
+  | [op: 'resolve', path: Path, value: unknown, root: object]
+  | [op: 'reject', path: Path, error: unknown, root: object]
 type Listener = (op: Op, nextVersion: number) => void
 
 type AnyFunction = (...args: any[]) => any
@@ -230,7 +231,7 @@ const buildProxyFunction = (
         removePropListener(prop)
         const deleted = Reflect.deleteProperty(target, prop)
         if (deleted) {
-          notifyUpdate(['delete', [prop], prevValue])
+          notifyUpdate(['delete', [prop], prevValue, target])
         }
         return deleted
       },
@@ -255,12 +256,12 @@ const buildProxyFunction = (
             .then((v) => {
               value.status = 'fulfilled'
               value.value = v
-              notifyUpdate(['resolve', [prop], v])
+              notifyUpdate(['resolve', [prop], v, target])
             })
             .catch((e) => {
               value.status = 'rejected'
               value.reason = e
-              notifyUpdate(['reject', [prop], e])
+              notifyUpdate(['reject', [prop], e, target])
             })
         } else {
           if (!proxyStateMap.has(value) && canProxy(value)) {
@@ -274,12 +275,12 @@ const buildProxyFunction = (
         }
         const prevLength = Array.isArray(target) ? target.length : 0
         Reflect.set(target, prop, nextValue, receiver)
-        notifyUpdate(['set', [prop], value, prevValue])
+        notifyUpdate(['set', [prop], value, prevValue, target])
         // Hack to get `books/length` notified as dirty...
         if (Array.isArray(target)) {
           const nextLength = target.length
           if (prevLength !== nextLength) {
-            notifyUpdate(['set', ['length'], nextLength, prevLength])
+            notifyUpdate(['set', ['length'], nextLength, prevLength, target])
           }
         }
         return true
@@ -287,6 +288,9 @@ const buildProxyFunction = (
     }
     const proxyObject = newProxy(baseObject, handler)
     proxyCache.set(initialObject, proxyObject)
+    // baseObject is the new mutated store, and if someone ever does proxy(baseObject),
+    // don't make yet another copy
+    proxyCache.set(baseObject, proxyObject)
     const proxyState: ProxyState = [
       baseObject,
       ensureVersion,
