@@ -63,18 +63,14 @@ export function useStore<T extends object>(
   // Use just 1 ref for all our state
   const ref = useRef<StoreRef | null>(null)
   if (!ref.current) {
-    const stats = new Map<object, StoreStats>()
+    const statsMap = new Map<object, StoreStats>()
 
     // I've forked proxy-compare to accept an`onAccess` callback, so that we
     // can more directly update our internal store of accessed properties,
     // and not have to rely on `affectedToPathList` to pull them out later.
     const onAccess = (store: object, prop: string | symbol) => {
       console.log({ action: 'ACCESS', store, storeId: objectId(store) })
-      let s = stats.get(store)
-      if (!s) {
-        s = new StoreStats()
-        stats.set(store, s)
-      }
+      const s = StoreStats.get(statsMap, store)
       if (!s.accesses.has(prop)) {
         debug && console.log('ACCESSED', prop)
         s.accesses.add(prop)
@@ -84,7 +80,7 @@ export function useStore<T extends object>(
     const proxyCache = new WeakMap()
 
     ref.current = {
-      stats,
+      stats: statsMap,
       onAccess,
       proxy: createProxy(store, onAccess, proxyCache),
       proxyCache,
@@ -99,36 +95,22 @@ export function useStore<T extends object>(
   // We're going to render our JSX now, so assume we're up-to-date, and start/reset
   // recording all changes + all accesses from here on.
   current.hasNewChange = false
+  // TODO Reset accesses in the StoreStats
 
-  // We use `useSyncExternalStore` to get its tear avoidance, but cheat and don't have
-  // real snapshots; instead our "snapshot" is a version number that we tick when we
-  // realize there as been a change that we need to re-render.
-  // This is similar to Mobx's approach: https://github.com/mobxjs/mobx/pull/3590
   const compareProxy = useSyncExternalStore(
     useCallback(
       (callback) => {
-        const { stats } = current
+        const { stats: statsMap } = current
         const unsub = subscribe(store, (ops) => {
           for (const op of ops) {
-            // Get the child store
+            debug && console.log('CHANGE', op[0], op[1].join('/'))
+            // Super hacky change to vanilla.ts: get the last path's _instance_
             const origObject = op[op.length - 1] as object
             const store = proxy(origObject)
-            console.log({
-              action: 'CHANGE',
-              origObject,
-              origObjectId: objectId(origObject),
-              store,
-              storeId: objectId(store),
-            })
-            let s = stats.get(store)
-            if (!s) {
-              s = new StoreStats()
-              stats.set(store, s)
-            }
-            // Get the last path, i.e. the store
+            const stats = StoreStats.get(statsMap, store)
+            // Get the last path
             const paths = op[1]
-            s.changes.add(paths![paths.length - 1]!)
-            debug && console.log('CHANGE', op[0], op[1].join('/'))
+            stats.changes.add(paths![paths.length - 1]!)
             current.hasNewChange = true
             current.hasAnyChange = true
           }
@@ -155,12 +137,13 @@ export function useStore<T extends object>(
         // Determine if the change touched something we actively used
         const dirtyStores = getDirtyStores(stats)
         if (dirtyStores.length > 0) {
+          // TODO This should be done recursively up from each dirty `store` (which
+          //  could be a child proxy) up to the root `store`, so that all levels up
+          //  the tree are invalidated, just like snapshots.
           for (const store of dirtyStores) {
             proxyCache.delete(store)
           }
-          // Always create a new root proxy, even if it's only a child that changed
-          // to ensure getSnapshot returns a new version.
-          // ...maybe this should be done like snapshots, from a child up to the root...
+          // ...until we do the above TODO, at least invalidate the root proxy
           proxyCache.delete(store)
           current.proxy = createProxy(store, onAccess, proxyCache)
         }
@@ -173,17 +156,14 @@ export function useStore<T extends object>(
     () => 1
   )
 
-  // We're creating a double proxy here; in theory if we knew this compare-proxy was only
-  // going to be used for reads, we could compare-proxy against the original object;
-  // but that would defeat the purpose of `useStore` returning a "still unified" proxy.
   return compareProxy
 }
 
-function getDirtyStores(stats: Map<object, StoreStats>): object[] {
-  // ...this is just a .filter(s => s.isDirty) but "for loops are faster"?
+// ...this is just a .filter(s => s.isDirty) but "for loops are faster"?
+function getDirtyStores(statsMap: Map<object, StoreStats>): object[] {
   const dirtyStores = []
-  for (const [store, stat] of stats) {
-    if (stat.isDirty) {
+  for (const [store, stats] of statsMap) {
+    if (stats.isDirty) {
       dirtyStores.push(store)
     }
   }
@@ -194,8 +174,18 @@ function getDirtyStores(stats: Map<object, StoreStats>): object[] {
 // changes, the combination of which allow use to very quickly determine
 // if there have been dirty reads.
 class StoreStats {
+  static get(stats: Map<object, StoreStats>, store: object): StoreStats {
+    let s = stats.get(store)
+    if (!s) {
+      s = new StoreStats()
+      stats.set(store, s)
+    }
+    return s
+  }
+
   accesses = new Set<string | symbol>()
   changes = new Set<string | symbol>()
+
   get isDirty(): boolean {
     for (const key of this.accesses) {
       if (this.changes.has(key)) {
