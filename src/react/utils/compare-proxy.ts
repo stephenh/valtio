@@ -102,13 +102,18 @@ const createProxyHandler = <T extends object>(origObj: T, frozen: boolean) => {
     // ;(state[AFFECTED_PROPERTY] as Affected).delete(origObj)
   }
   const handler: ProxyHandler<T> = {
-    get(target, key) {
+    // TODO Upstream maybe to proxy-compare; pass along the receiver so
+    // that we can "see into" what fields getters and setters are internally
+    // accessing, because we need to see the actual physical fields to have
+    // overlap between the accesses & changes (unlike mobx, we don't know
+    // when getters change).
+    get(target, key, receiver) {
       if (key === GET_ORIGINAL_SYMBOL) {
         return origObj
       }
       recordUsage(KEYS_PROPERTY, key)
       return createProxy(
-        Reflect.get(target, key),
+        Reflect.get(target, key, receiver),
         state[AFFECTED_PROPERTY] as Affected,
         state[PROXY_CACHE_PROPERTY]
       )
