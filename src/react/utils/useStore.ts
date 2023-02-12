@@ -19,11 +19,36 @@ interface StoreRef {
 /**
  * Provides a component with usage-based tracking of changes to a store.
  *
- * @example foo
- * const view = useStore(proxy)
+ * Instead of using a snapshot, and compare-proxying against that, we compare-proxy
+ * against the store itself, which means to detect changes we can't use the
+ * `isChanged` from proxy-compare, but instead track both accessed + mutations,
+ * and use the intersection of those to determine if we've had a dirty read.
+ *
+ * Current pros/cons:
+ *
+ * - Pro: removes complexity of separate snap/store
+ * - Pro: removes need to "loop over snapshots, but pass the store"
+ * - Pro: (improvement over the `add-use-store` v1 branch) invalidates the
+ *     compare-proxy for each store on change, so should identity should
+ *     intuitively "just work" with deps arrays/React.memos
+ * - Con: Currently only _directly_ modified stores have their identity changed,
+ *     and we don't "walk up" and invalid parent compare-proxies like snapshot
+ *     does. Would be possible just haven't tried yet.
+ *
+ * @example
+ * function MyComponent() {
+ *  const store = useStore(props.proxy)
+ *  return (
+ *    <>
+ *      <div onClick={() => store.count++}>
+ *        {store.count}
+ *      </div>
+ *    </>
+ *  );
  */
 export function useStore<T extends object>(
   store: T,
+  // TODO Remove hacky debug flag for development
   opts: { debug: boolean } = { debug: false }
 ): T {
   const { debug } = opts
@@ -39,6 +64,10 @@ export function useStore<T extends object>(
   const ref = useRef<StoreRef | null>(null)
   if (!ref.current) {
     const stats = new Map<object, StoreStats>()
+
+    // I've forked proxy-compare to accept an`onAccess` callback, so that we
+    // can more directly update our internal store of accessed properties,
+    // and not have to rely on `affectedToPathList` to pull them out later.
     const onAccess = (store: object, prop: string | symbol) => {
       console.log({ action: 'ACCESS', store, storeId: objectId(store) })
       let s = stats.get(store)
@@ -151,23 +180,33 @@ export function useStore<T extends object>(
 }
 
 function getDirtyStores(stats: Map<object, StoreStats>): object[] {
+  // ...this is just a .filter(s => s.isDirty) but "for loops are faster"?
   const dirtyStores = []
-  nextStore: for (const [store, stat] of stats) {
-    for (const key of stat.accesses) {
-      if (stat.changes.has(key)) {
-        dirtyStores.push(store)
-        break nextStore
-      }
+  for (const [store, stat] of stats) {
+    if (stat.isDirty) {
+      dirtyStores.push(store)
     }
   }
   return dirtyStores
 }
 
+// For each store we wrap in a compare-proxy, track both its accesses and
+// changes, the combination of which allow use to very quickly determine
+// if there have been dirty reads.
 class StoreStats {
   accesses = new Set<string | symbol>()
   changes = new Set<string | symbol>()
+  get isDirty(): boolean {
+    for (const key of this.accesses) {
+      if (this.changes.has(key)) {
+        return true
+      }
+    }
+    return false
+  }
 }
 
+// Remove, just for debugging "are these really the same object/proxy?"
 export const objectId = (() => {
   let currentId = 0
   const map = new WeakMap()
