@@ -26,11 +26,34 @@ interface StoreRef {
 /**
  * Provides a component with usage-based tracking of changes to a store.
  *
- * @example foo
- * const view = useStore(proxy)
+ * Instead of using a snapshot, and compare-proxying against that, we compare-proxy
+ * against the store itself, which means to detect changes we can't use the
+ * `isChanged` from proxy-compare, but instead track both accessed + mutations,
+ * and use the intersection of those to determine if we've had a dirty read.
+ *
+ * Current pros/cons:
+ *
+ * - Pro: removes complexity of separate snap/store
+ * - Pro: removes need to "loop over snapshots, but pass the store"
+ * - Con: current impl the `store` return value is stable even when there are
+ *     changes, so it can't be used for deps arrays/React.memos. See
+ *     `add-use-store-2` experiment for fixing that.
+ *
+ * @example
+ * function MyComponent() {
+ *   const store = useStore(props.proxy)
+ *   return (
+ *     <>
+ *       <div onClick={() => store.count++}>
+ *         {store.count}
+ *       </div>
+ *     </>
+ *   );
+ * }
  */
 export function useStore<T extends object>(
   proxy: T,
+  // TODO Remove the hacky debug prop
   opts: { debug: boolean } = { debug: false }
 ): T {
   const { debug } = opts
@@ -86,7 +109,7 @@ export function useStore<T extends object>(
       // - # of accessed is more than last time
       if (
         changed.size > lastChecked.changedSize ||
-        accessed.sets > lastChecked.accessedSets
+        (accessed.sets > lastChecked.accessedSets && changed.size > 0)
       ) {
         lastChecked.changedSize = changed.size
         lastChecked.accessedSets = accessed.sets
@@ -144,6 +167,9 @@ function hasDirtyReads(
 class CountingWeakMap<K extends object, V> extends WeakMap<K, V> {
   sets = 0
 
+  // TODO Actually since to just `set` calls, we'd need to hook into `value.add`
+  // calls as well, to see each time a new property on a given object is accessed,
+  // not just the # of objects themselves.
   set(key: any, value: any) {
     this.sets++
     return super.set(key, value)
