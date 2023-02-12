@@ -288,8 +288,9 @@ const buildProxyFunction = (
     }
     const proxyObject = newProxy(baseObject, handler)
     proxyCache.set(initialObject, proxyObject)
-    // baseObject is the new mutated store, and if someone ever does proxy(baseObject),
-    // don't make yet another copy
+    // TODO Probably upstream to Valtio ... baseObject is the new mutable instance, and if someone
+    //  ever does proxy(baseObject) instead (which we do in `onChange` using the most-leaf instance),
+    // we don't want to have two proxies, one for the initialObject and one for the baseObject.
     proxyCache.set(baseObject, proxyObject)
     const proxyState: ProxyState = [
       baseObject,

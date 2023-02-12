@@ -106,6 +106,7 @@ export function useStore<T extends object>(
             debug && console.log('CHANGE', op[0], op[1].join('/'))
             // Super hacky change to vanilla.ts: get the last path's _instance_
             const origObject = op[op.length - 1] as object
+            // Resolve the internal baseObject instance back to a store proxy
             const store = proxy(origObject)
             const stats = StoreStats.get(statsMap, store)
             // Get the last path
