@@ -9,7 +9,7 @@ type ProxyObject = object
 
 type Path = (string | symbol)[]
 type Op =
-  | [op: 'set', path: Path, value: unknown, prevValue: unknown]
+  | [op: 'set', path: Path, value: unknown, prevValue: unknown, isNew: boolean]
   | [op: 'delete', path: Path, prevValue: unknown]
   | [op: 'resolve', path: Path, value: unknown]
   | [op: 'reject', path: Path, error: unknown]
@@ -32,6 +32,8 @@ type Snapshot<T> = T extends AnyFunction
  * It can be changed without any notice.
  */
 export type INTERNAL_Snapshot<T> = Snapshot<T>
+
+const IS_STORE_SYMBOL = Symbol()
 
 type HandlePromise = <P extends Promise<any>>(promise: P) => Awaited<P>
 
@@ -242,6 +244,12 @@ const buildProxyFunction = (
         }
         return deleted
       },
+      get(target, prop, receiver) {
+        if (prop === IS_STORE_SYMBOL) {
+          return true
+        }
+        return Reflect.get(target, prop, receiver)
+      },
       set(target: T, prop: string | symbol, value: any, receiver: object) {
         const hasPrevValue = Reflect.has(target, prop)
         const prevValue = Reflect.get(target, prop, receiver)
@@ -280,16 +288,11 @@ const buildProxyFunction = (
             addPropListener(prop, childProxyState)
           }
         }
-        const prevLength = Array.isArray(target) ? target.length : 0
+        const prevKeys = Object.keys(target).length
         Reflect.set(target, prop, nextValue, receiver)
-        notifyUpdate(['set', [prop], value, prevValue])
+        const nextKeys = Object.keys(target).length
         // Hack to get `books/length` notified as dirty...
-        if (Array.isArray(target)) {
-          const nextLength = target.length
-          if (prevLength !== nextLength) {
-            notifyUpdate(['set', ['length'], nextLength, prevLength])
-          }
-        }
+        notifyUpdate(['set', [prop], value, prevValue, prevKeys !== nextKeys])
         return true
       },
     }
@@ -398,6 +401,10 @@ export function snapshot<T extends object>(
 export function ref<T extends object>(obj: T): T & AsRef {
   refSet.add(obj)
   return obj as T & AsRef
+}
+
+export function isStore(obj: any): obj is object {
+  return typeof obj === 'object' && (obj as any)[IS_STORE_SYMBOL] === true
 }
 
 export const unstable_buildProxyFunction = buildProxyFunction

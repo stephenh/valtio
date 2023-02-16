@@ -1,8 +1,9 @@
 import { useCallback, useRef } from 'react'
 import useSyncExternalStoreExports from 'use-sync-external-store/shim'
-import { subscribe } from 'valtio'
+import { isStore, subscribe } from 'valtio'
 
 const { useSyncExternalStore } = useSyncExternalStoreExports
+const GET_ORIGINAL_SYMBOL = Symbol()
 
 /**
  * Provides a component with usage-based tracking of changes to a store.
@@ -34,19 +35,10 @@ const { useSyncExternalStore } = useSyncExternalStoreExports
  *    </>
  *  );
  */
-export function useStore<T extends object>(
-  store: T,
-  // TODO Remove hacky debug flag for development
-  opts: { debug: boolean } = { debug: false }
-): T {
-  // If we were passed a compare-proxy, i.e. a child component doing their own
-  // `const store = useStore(props.parent)` line, unwrap it to establish the child
-  // component's own usage tracking.
-  // if (getUntracked(store)) {
-  //   store = getUntracked(store) as T
-  // }
-
-  const { debug } = opts
+export function useStore<T extends object>(store: T): T {
+  // If we were passed one of our own access proxies, i.e. a child component
+  // using `useStore`, unwrap it to establish the child component's own tracking
+  store = getOriginalObject(store)
 
   const ref = useRef<UseStoreAdmin | null>(null)
   if (!ref.current) {
@@ -74,16 +66,14 @@ export function useStore<T extends object>(
 
 // Instead of lots of refs, we use a single ref with our bag of state.
 class UseStoreAdmin {
-  onStoreChange: () => void
+  onStoreChange = () => {}
   stats = new Map<object, StoreStats>()
   proxyCache = new WeakMap<any, any>()
   hasNewAccess = false
   hasNewChange = false
   hasAnyChange = false
 
-  constructor(private store: object) {
-    this.onStoreChange = () => {}
-  }
+  constructor(private store: object) {}
 
   beginRender() {
     this.hasNewChange = false
@@ -91,6 +81,7 @@ class UseStoreAdmin {
     for (const [, stat] of this.stats) {
       stat.accesses.clear()
       stat.changes.clear()
+      stat.keysChange = false
     }
   }
 
@@ -112,43 +103,31 @@ class UseStoreAdmin {
     for (const [, stats] of this.stats) {
       if (stats.hasDirtyRead) {
         // Unset our proxy, up the root, which creates new a new snapshot
-        ;[...stats.parents, stats].forEach((s) => {
-          this.proxyCache.delete(s.store)
+        ;[...stats.parents, stats].forEach((stats) => {
+          this.proxyCache.delete(stats.store)
         })
       }
     }
   }
 
-  // Wraps a store and tracks access
+  // Wraps a store with an access tracking proxy
   getOrCreateProxy<T extends object>(store: T, parents: StoreStats[] = []): T {
     let proxy = this.proxyCache.get(store)
     if (!proxy) {
       // This will immediately start subscribing to the proxy
-      const stats = this.getStoreStats(parents, store)
-      // eslint-disable-next-line @typescript-eslint/no-this-alias
-      const ref = this
-      proxy = new Proxy(store, {
-        get(target, prop: string, receiver) {
-          stats.accesses.add(prop)
-          ref.hasNewAccess = true
-          const value = Reflect.get(target, prop, receiver)
-          return typeof value === 'object' && value !== null
-            ? ref.getOrCreateProxy(value, [...parents, stats])
-            : value
-        },
-      })
+      proxy = this.getStoreStats(parents, store).newProxy()
       this.proxyCache.set(store, proxy)
     }
     return proxy
   }
 
   getStoreStats(parents: StoreStats[], store: object): StoreStats {
-    let s = this.stats.get(store)
-    if (!s) {
-      s = new StoreStats(this, parents, store)
-      this.stats.set(store, s)
+    let stats = this.stats.get(store)
+    if (!stats) {
+      stats = new StoreStats(this, parents, store)
+      this.stats.set(store, stats)
     }
-    return s
+    return stats
   }
 }
 
@@ -158,6 +137,7 @@ class UseStoreAdmin {
 class StoreStats {
   accesses = new Set<string | symbol>()
   changes = new Set<string | symbol>()
+  keysChange = false
   unsub: () => void
 
   constructor(
@@ -165,11 +145,17 @@ class StoreStats {
     public parents: StoreStats[],
     public store: object
   ) {
-    // Only listen to changes directly to this store
     this.unsub = subscribe(store, (ops) => {
-      for (const [, path] of ops) {
+      for (const tuple of ops) {
+        const [op, path] = tuple
+        // Only listen to changes directly to this store
         if (path.length === 1) {
           this.changes.add(String(path[0]))
+          if (op === 'set' && tuple[4]) {
+            this.keysChange = true
+          } else if (op === 'delete') {
+            this.keysChange = true
+          }
         }
         ref.hasNewChange = true
         ref.hasAnyChange = true
@@ -180,6 +166,9 @@ class StoreStats {
 
   /** Return true if any of the accessed properties have changed. */
   get hasDirtyRead(): boolean {
+    if (this.keysChange) {
+      return true
+    }
     for (const key of this.accesses) {
       if (this.changes.has(key)) {
         return true
@@ -187,7 +176,26 @@ class StoreStats {
     }
     return false
   }
+
+  newProxy(): any {
+    const { ref, store, accesses } = this
+    const parents = [...this.parents, this]
+    return new Proxy(store, {
+      get(target, prop: string | symbol, receiver) {
+        if (prop === GET_ORIGINAL_SYMBOL) {
+          return store
+        }
+        accesses.add(prop)
+        ref.hasNewAccess = true
+        const value = Reflect.get(target, prop, receiver)
+        return isStore(value) ? ref.getOrCreateProxy(value, parents) : value
+      },
+    })
+  }
 }
+
+const getOriginalObject = <T extends object>(obj: T) =>
+  (obj as { [GET_ORIGINAL_SYMBOL]?: typeof obj })[GET_ORIGINAL_SYMBOL] || obj
 
 // Remove, just for debugging "are these really the same object/proxy?"
 export const objectId = (() => {

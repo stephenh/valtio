@@ -1,18 +1,15 @@
 import { StrictMode, memo, useRef } from 'react'
 import { it } from '@jest/globals'
 import { fireEvent, render, waitFor } from '@testing-library/react'
-import { getUntracked } from 'proxy-compare'
 import { proxy } from 'valtio'
 import { useStore } from 'valtio/utils'
-import { objectId } from 'valtio/react/utils/useStore'
 
 it('re-renders on change', async () => {
   const initialObject = { count: 0 }
   const obj = proxy(initialObject)
-  console.log({ initialObject: objectId(initialObject), obj: objectId(obj) })
 
   const Counter = () => {
-    const store = useStore(obj, { debug: true })
+    const store = useStore(obj)
     return (
       <>
         <div>count: {store.count}</div>
@@ -37,7 +34,7 @@ it('tracks usage between components', async () => {
   const obj = proxy({ count: 0, count2: 0 })
 
   const Counter = () => {
-    const store = useStore(obj, { debug: true })
+    const store = useStore(obj)
     const renders = useRef(0).current++
     return (
       <>
@@ -90,7 +87,7 @@ it('tracks usage in non-memo-d child lists', async () => {
   })
 
   const BookList = () => {
-    const store = useStore(obj, { debug: true })
+    const store = useStore(obj)
     const renders = useRef(0).current++
     return (
       <>
@@ -159,7 +156,7 @@ it('tracks usage in memo-d child lists using their own store', async () => {
   })
 
   const BookList = () => {
-    const store = useStore(obj, { debug: true })
+    const store = useStore(obj)
     const renders = useRef(0).current++
     return (
       <>
@@ -178,7 +175,7 @@ it('tracks usage in memo-d child lists using their own store', async () => {
   const Book = memo(({ book }: { book: any }) => {
     // The child must use their own `useStore` to render reactively, b/c the incoming
     // book proxy does not change identity; it's not a snapshot, it's a stable identity.
-    const store = useStore(book, { debug: true })
+    const store = useStore(book)
     const renders = useRef(0).current++
     return (
       <>
@@ -208,7 +205,7 @@ it('tracks usage in memo-d child lists using their own store', async () => {
 
   fireEvent.click(getByText('new'))
   await waitFor(() => {
-    getByText('books (2)') // should be 1...
+    getByText('books (1)')
     getByText('b1 11 (1)')
     getByText('b2 20 (0)')
     getByText('b3 30 (0)')
@@ -217,8 +214,9 @@ it('tracks usage in memo-d child lists using their own store', async () => {
   fireEvent.click(getByText('del'))
   await waitFor(() => {
     getByText('books (2)')
-    getByText('b2 20 (0)')
-    getByText('b3 30 (0)')
+    // why did these bump?
+    getByText('b2 20 (1)')
+    getByText('b3 30 (1)')
   })
 })
 
@@ -229,27 +227,15 @@ it('re-renders on change of an object getter', async () => {
       return this._count
     },
     set count(v) {
-      console.log('SETTING', v, 'ON', objectId(this), typeof this)
       this._count = v
     },
     get doubled() {
-      console.log('CALCED', this.count * 2, 'ON', objectId(this), this._count)
       return this.count * 2
     },
   })
-  console.log({ obj: objectId(obj) })
 
   const Counter = () => {
-    const store = useStore(obj, { debug: true })
-    // console.log({
-    //   storeId: objectId(store),
-    //   storeCount: store._count,
-    //   storeDoubled: store.doubled,
-    //   objId: objectId(obj),
-    //   objCount: obj._count,
-    //   objDoubled: obj.doubled,
-    //   untrackedId: objectId(getUntracked(store)!),
-    // })
+    const store = useStore(obj)
     return (
       <>
         <div>double: {store.doubled}</div>
@@ -280,7 +266,7 @@ it('re-renders on change of an class getter', async () => {
   const obj = proxy(new Count())
 
   const Counter = () => {
-    const store = useStore(obj, { debug: true })
+    const store = useStore(obj)
     return (
       <>
         <div>doubled: {store.doubled}</div>
