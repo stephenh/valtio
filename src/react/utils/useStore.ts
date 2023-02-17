@@ -3,12 +3,12 @@ import useSyncExternalStoreExports from 'use-sync-external-store/shim'
 import { isStore, subscribe } from 'valtio'
 
 const { useSyncExternalStore } = useSyncExternalStoreExports
-const GET_ORIGINAL_SYMBOL = Symbol()
+const GET_STORE_SYMBOL = Symbol()
 
 /**
  * Provides a component with usage-based tracking of changes to a store.
  *
- * Instead of using a snapshot, and compare-proxying against that, we compare-proxy
+ * Instead of using a snapshot, and compare-proxying against that, we access proxy
  * against the store itself, which means to detect changes we can't use the
  * `isChanged` from proxy-compare, but instead track both accessed + mutations,
  * and use the intersection of those to determine if we've had a dirty read.
@@ -16,13 +16,11 @@ const GET_ORIGINAL_SYMBOL = Symbol()
  * Current pros/cons:
  *
  * - Pro: removes complexity of separate snap/store
- * - Pro: removes need to "loop over snapshots, but pass the store"
- * - Pro: (improvement over the `add-use-store` v1 branch) invalidates the
- *     compare-proxy for each store on change, so should identity should
- *     intuitively "just work" with deps arrays/React.memos
- * - Con: Currently only _directly_ modified stores have their identity changed,
- *     and we don't "walk up" and invalid parent compare-proxies like snapshot
- *     does. Would be possible just haven't tried yet.
+ * - Pro: removes need to "JSX loops over snapshots, but pass the store to children"
+ * - Pro: works in both parent component & child components that each of their
+ *     own `useStore` calls
+ * - Pro: access proxies are stable/unstable based on their change since
+ *     last render, so should "just work" with deps arrays/React.memos
  *
  * @example
  * function MyComponent() {
@@ -38,7 +36,7 @@ const GET_ORIGINAL_SYMBOL = Symbol()
 export function useStore<T extends object>(store: T): T {
   // If we were passed one of our own access proxies, i.e. a child component
   // using `useStore`, unwrap it to establish the child component's own tracking
-  store = getOriginalObject(store)
+  store = getStore(store)
 
   const ref = useRef<UseStoreAdmin | null>(null)
   if (!ref.current) {
@@ -47,8 +45,6 @@ export function useStore<T extends object>(store: T): T {
   }
   const { current } = ref
 
-  // We're going to render our JSX now, so assume we're up-to-date, and start/reset
-  // recording all changes + all accesses from here on.
   current.beginRender()
 
   return useSyncExternalStore(
@@ -76,6 +72,8 @@ class UseStoreAdmin {
   constructor(private store: object) {}
 
   beginRender() {
+    // We're rendering our JSX now, so assume we're up-to-date, and start/reset
+    // recording all changes + all accesses from here on.
     this.hasNewChange = false
     this.hasNewAccess = false
     for (const [, stat] of this.stats) {
@@ -114,7 +112,7 @@ class UseStoreAdmin {
   getOrCreateProxy<T extends object>(store: T, parents: StoreStats[] = []): T {
     let proxy = this.proxyCache.get(store)
     if (!proxy) {
-      // This will immediately start subscribing to the proxy
+      // This will immediately start subscribing to the store changes
       proxy = this.getStoreStats(parents, store).newProxy()
       this.proxyCache.set(store, proxy)
     }
@@ -166,7 +164,7 @@ class StoreStats {
 
   /** Return true if any of the accessed properties have changed. */
   get hasDirtyRead(): boolean {
-    if (this.keysChange) {
+    if (this.keysChange && this.accesses.size > 0) {
       return true
     }
     for (const key of this.accesses) {
@@ -182,7 +180,7 @@ class StoreStats {
     const parents = [...this.parents, this]
     return new Proxy(store, {
       get(target, prop: string | symbol, receiver) {
-        if (prop === GET_ORIGINAL_SYMBOL) {
+        if (prop === GET_STORE_SYMBOL) {
           return store
         }
         accesses.add(prop)
@@ -194,18 +192,5 @@ class StoreStats {
   }
 }
 
-const getOriginalObject = <T extends object>(obj: T) =>
-  (obj as { [GET_ORIGINAL_SYMBOL]?: typeof obj })[GET_ORIGINAL_SYMBOL] || obj
-
-// Remove, just for debugging "are these really the same object/proxy?"
-export const objectId = (() => {
-  let currentId = 0
-  const map = new WeakMap()
-  return (object: object): number => {
-    if (!map.has(object)) {
-      map.set(object, ++currentId)
-    }
-    return map.get(object)!
-  }
-})()
-Object.assign(global, { objectId })
+const getStore = <T extends object>(obj: T) =>
+  (obj as { [GET_STORE_SYMBOL]?: typeof obj })[GET_STORE_SYMBOL] || obj
