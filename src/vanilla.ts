@@ -33,8 +33,6 @@ type Snapshot<T> = T extends AnyFunction
  */
 export type INTERNAL_Snapshot<T> = Snapshot<T>
 
-const IS_STORE_SYMBOL = Symbol()
-
 type HandlePromise = <P extends Promise<any>>(promise: P) => Awaited<P>
 
 type CreateSnapshot = <T extends object>(
@@ -244,12 +242,6 @@ const buildProxyFunction = (
         }
         return deleted
       },
-      get(target, prop, receiver) {
-        if (prop === IS_STORE_SYMBOL) {
-          return true
-        }
-        return Reflect.get(target, prop, receiver)
-      },
       set(target: T, prop: string | symbol, value: any, receiver: object) {
         const hasPrevValue = Reflect.has(target, prop)
         const prevValue = Reflect.get(target, prop, receiver)
@@ -401,10 +393,6 @@ export function snapshot<T extends object>(
 export function ref<T extends object>(obj: T): T & AsRef {
   refSet.add(obj)
   return obj as T & AsRef
-}
-
-export function isStore(obj: any): obj is object {
-  return typeof obj === 'object' && (obj as any)[IS_STORE_SYMBOL] === true
 }
 
 export const unstable_buildProxyFunction = buildProxyFunction

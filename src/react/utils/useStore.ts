@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react'
 import useSyncExternalStoreExports from 'use-sync-external-store/shim'
-import { isStore, subscribe } from 'valtio'
+import { getVersion, subscribe } from 'valtio'
 
 const { useSyncExternalStore } = useSyncExternalStoreExports
 const GET_STORE_SYMBOL = Symbol()
@@ -186,7 +186,9 @@ class StoreStats {
         accesses.add(prop)
         ref.hasNewAccess = true
         const value = Reflect.get(target, prop, receiver)
-        return isStore(value) ? ref.getOrCreateProxy(value, parents) : value
+        return getVersion(value) !== undefined
+          ? ref.getOrCreateProxy(value, parents)
+          : value
       },
     })
   }
